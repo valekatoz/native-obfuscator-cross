@@ -40,7 +40,7 @@ dependencies {
 
 // Define default main class
 if (!hasProperty("mainClass")) {
-    extra["mainClass"] = "by.radioegor146.Main"
+    extra["mainClass"] = "dev.lennoxlotl.obfuscator.Main"
 }
 
 // Define test sources
