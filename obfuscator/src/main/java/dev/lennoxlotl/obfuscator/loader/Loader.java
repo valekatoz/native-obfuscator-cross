@@ -1,11 +1,11 @@
-package dev.lennoxlotl.obfuscator.compiletime;
+package dev.lennoxlotl.obfuscator.loader;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
-public class LoaderUnpack {
+public class Loader {
     public static native void registerNativesForClass(int index, Class<?> clazz);
 
     static {
@@ -19,16 +19,16 @@ public class LoaderUnpack {
                 platformTypeName = "x64";
                 break;
             case "aarch64":
-                platformTypeName = "arm64";
+                platformTypeName = "aarch64";
                 break;
             case "arm":
-                platformTypeName = "arm32";
+                platformTypeName = "aarch32";
                 break;
             case "x86":
                 platformTypeName = "x86";
                 break;
             default:
-                platformTypeName = "raw" + platform;
+                platformTypeName = platform;
                 break;
         }
 
@@ -40,10 +40,11 @@ public class LoaderUnpack {
         } else if (osName.contains("mac")) {
             osTypeName = "macos.dylib";
         } else {
-            osTypeName = "raw" + osName;
+            osTypeName = osName;
         }
 
-        String libFileName = String.format("/%s/%s-%s", LoaderUnpack.class.getName().split("\\.")[0], platformTypeName, osTypeName);
+        String libFileName = String.format("/%s/%s-%s",
+            Loader.class.getName().replace('.', '/').replace("/Loader", ""), platformTypeName, osTypeName);
 
         File libFile;
         try {
@@ -57,7 +58,7 @@ public class LoaderUnpack {
         }
         byte[] arrayOfByte = new byte[2048];
         try {
-            InputStream inputStream = LoaderUnpack.class.getResourceAsStream(libFileName);
+            InputStream inputStream = Loader.class.getResourceAsStream(libFileName);
             if (inputStream == null) {
                 throw new UnsatisfiedLinkError(String.format("Failed to open lib file: %s", libFileName));
             }

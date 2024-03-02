@@ -1,28 +1,26 @@
 package dev.lennoxlotl.obfuscator;
 
 import dev.lennoxlotl.obfuscator.bytecode.PreprocessorRunner;
-import dev.lennoxlotl.obfuscator.source.CMakeFilesBuilder;
+import dev.lennoxlotl.obfuscator.config.ObfuscatorConfig;
 import dev.lennoxlotl.obfuscator.source.ClassSourceBuilder;
 import dev.lennoxlotl.obfuscator.source.MainSourceBuilder;
 import dev.lennoxlotl.obfuscator.source.StringPool;
+import dev.lennoxlotl.obfuscator.zig.ZigCompiler;
+import lombok.Getter;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.commons.ClassRemapper;
 import org.objectweb.asm.commons.Remapper;
-import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
-import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.MethodNode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.tinylog.Logger;
 import ru.gravit.launchserver.asm.ClassMetadataReader;
 import ru.gravit.launchserver.asm.SafeClassWriter;
 
 import java.io.*;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.file.FileSystem;
+import java.nio.file.*;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -34,10 +32,8 @@ import java.util.stream.IntStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+@Getter
 public class NativeObfuscator {
-
-    private static final Logger logger = LoggerFactory.getLogger(NativeObfuscator.class);
-
     private final Snippets snippets;
     private final StringPool stringPool;
     private final MethodProcessor methodProcessor;
@@ -46,37 +42,6 @@ public class NativeObfuscator {
     private final NodeCache<String> cachedClasses;
     private final NodeCache<CachedMethodInfo> cachedMethods;
     private final NodeCache<CachedFieldInfo> cachedFields;
-
-    public static class InvokeDynamicInfo {
-        private final String methodName;
-        private final int index;
-
-        public InvokeDynamicInfo(String methodName, int index) {
-            this.methodName = methodName;
-            this.index = index;
-        }
-
-        public String getMethodName() {
-            return methodName;
-        }
-
-        public int getIndex() {
-            return index;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            InvokeDynamicInfo that = (InvokeDynamicInfo) o;
-            return index == that.index && Objects.equals(methodName, that.methodName);
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(methodName, index);
-        }
-    }
 
     private HiddenMethodsPool hiddenMethodsPool;
 
@@ -93,14 +58,23 @@ public class NativeObfuscator {
         methodProcessor = new MethodProcessor(this);
     }
 
-    public void process(Path inputJarPath, Path outputDir, List<Path> inputLibs, String loaderDir, String libName, Platform platform, boolean useAnnotations) throws IOException {
+    public void process(ObfuscatorConfig config) throws IOException {
+        Path outputDir = new File("temp-" + System.currentTimeMillis()).toPath();
+        Path inputJarPath = config.getInputJar().toPath();
+        List<Path> inputLibs = new ArrayList<>();
+        if (config.getLibrariesDirectory() != null) {
+            Files.walk(config.getLibrariesDirectory().toPath(), FileVisitOption.FOLLOW_LINKS)
+                .filter(f -> f.toString().endsWith(".jar") || f.toString().endsWith(".zip"))
+                .forEach(inputLibs::add);
+        }
+
         if (Files.exists(outputDir) && Files.isSameFile(inputJarPath.toRealPath().getParent(), outputDir.toRealPath())) {
             throw new RuntimeException("Input jar can't be in the same directory as output directory");
         }
 
         List<Path> libs = new ArrayList<>(inputLibs);
         libs.add(inputJarPath);
-        ClassMethodFilter classMethodFilter = new ClassMethodFilter(useAnnotations);
+        ClassMethodFilter classMethodFilter = new ClassMethodFilter(config.isAnnotations());
         ClassMetadataReader metadataReader = new ClassMetadataReader(libs.stream().map(x -> {
             try {
                 return new JarFile(x.toFile());
@@ -118,46 +92,24 @@ public class NativeObfuscator {
         Util.copyResource("sources/native_jvm_output.hpp", cppDir);
         Util.copyResource("sources/string_pool.hpp", cppDir);
 
-        String projectName = "native_library";
-
-        CMakeFilesBuilder cMakeBuilder = new CMakeFilesBuilder(projectName);
-        cMakeBuilder.addMainFile("native_jvm.hpp");
-        cMakeBuilder.addMainFile("native_jvm.cpp");
-        cMakeBuilder.addMainFile("native_jvm_output.hpp");
-        cMakeBuilder.addMainFile("native_jvm_output.cpp");
-        cMakeBuilder.addMainFile("string_pool.hpp");
-        cMakeBuilder.addMainFile("string_pool.cpp");
-
-        if (platform == Platform.HOTSPOT) {
-            cMakeBuilder.addFlag("USE_HOTSPOT");
-        }
-
         MainSourceBuilder mainSourceBuilder = new MainSourceBuilder();
 
         File jarFile = inputJarPath.toAbsolutePath().toFile();
+        Path tempJarFile = outputDir.resolve(jarFile.getName());
         try (JarFile jar = new JarFile(jarFile);
-             ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(outputDir.resolve(jarFile.getName())))) {
+             ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(tempJarFile))) {
 
-            logger.info("Processing {}...", jarFile);
+            Logger.info("Processing {}...", jarFile);
 
-            if (loaderDir != null) {
-                nativeDir = loaderDir;
-
-                if (jar.stream().anyMatch(x -> x.getName().equals(nativeDir) ||
-                    x.getName().startsWith(nativeDir + "/"))) {
-                    logger.warn("Directory '{}' already exists in input jar file", nativeDir);
-                }
-            } else {
-                int nativeDirId = IntStream.iterate(0, i -> i + 1)
-                    .filter(i -> jar.stream().noneMatch(x -> x.getName().equals("native" + i) ||
-                        x.getName().startsWith("native" + i + "/")))
-                    .findFirst().orElseThrow(RuntimeException::new);
-                nativeDir = "native" + nativeDirId;
+            nativeDir = config.getLoaderDirectory();
+            if (jar.stream().anyMatch(x -> x.getName().equals(nativeDir) ||
+                x.getName().startsWith(nativeDir + "/"))) {
+                Logger.warn("Directory '{}' already exists in input jar file", nativeDir);
             }
 
             if (jar.stream().anyMatch(x -> x.getName().equals(nativeDir) ||
                 x.getName().startsWith(nativeDir + "/"))) {
-                logger.warn("Directory '{}' already exists in input jar file", nativeDir);
+                Logger.warn("Directory '{}' already exists in input jar file", nativeDir);
             }
 
             hiddenMethodsPool = new HiddenMethodsPool(nativeDir + "/hidden");
@@ -194,8 +146,8 @@ public class NativeObfuscator {
                     if (!classMethodFilter.shouldProcess(rawClassNode) ||
                         rawClassNode.methods.stream().noneMatch(method -> MethodProcessor.shouldProcess(method) &&
                             classMethodFilter.shouldProcess(rawClassNode, method))) {
-                        logger.info("Skipping {}", rawClassNode.name);
-                        if (useAnnotations) {
+                        Logger.info("Skipping {}", rawClassNode.name);
+                        if (config.isAnnotations()) {
                             ClassMethodFilter.cleanAnnotations(rawClassNode);
                             ClassWriter clearedClassWriter = new SafeClassWriter(metadataReader, Opcodes.ASM7);
                             rawClassNode.accept(clearedClassWriter);
@@ -206,12 +158,12 @@ public class NativeObfuscator {
                         return;
                     }
 
-                    logger.info("Preprocessing {}", rawClassNode.name);
+                    Logger.info("Preprocessing {}", rawClassNode.name);
 
                     rawClassNode.methods.stream()
                         .filter(MethodProcessor::shouldProcess)
                         .filter(methodNode -> classMethodFilter.shouldProcess(rawClassNode, methodNode))
-                        .forEach(methodNode -> PreprocessorRunner.preprocess(rawClassNode, methodNode, platform));
+                        .forEach(methodNode -> PreprocessorRunner.preprocess(rawClassNode, methodNode, config.getPlatform()));
 
                     ClassWriter preprocessorClassWriter = new SafeClassWriter(metadataReader, Opcodes.ASM7 | ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
                     rawClassNode.accept(preprocessorClassWriter);
@@ -219,7 +171,7 @@ public class NativeObfuscator {
                     ClassNode classNode = new ClassNode(Opcodes.ASM7);
                     classReader.accept(classNode, 0);
 
-                    logger.info("Processing {}", classNode.name);
+                    Logger.info("Processing {}", classNode.name);
 
                     if (classNode.methods.stream().noneMatch(x -> x.name.equals("<clinit>"))) {
                         classNode.methods.add(new MethodNode(Opcodes.ASM7, Opcodes.ACC_STATIC,
@@ -261,11 +213,11 @@ public class NativeObfuscator {
                             }
                         }
 
-                        if (useAnnotations) {
+                        if (config.isAnnotations()) {
                             ClassMethodFilter.cleanAnnotations(classNode);
                         }
 
-                        classNode.version = 52;
+                        classNode.version = rawClassNode.version;
                         ClassWriter classWriter = new SafeClassWriter(metadataReader,
                             Opcodes.ASM7 | ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
                         classNode.accept(classWriter);
@@ -275,20 +227,17 @@ public class NativeObfuscator {
                         cppBuilder.addInstructions(instructions.toString());
                         cppBuilder.registerMethods(cachedStrings, cachedClasses, nativeMethods.toString(), hiddenMethods);
 
-                        cMakeBuilder.addClassFile("output/" + cppBuilder.getHppFilename());
-                        cMakeBuilder.addClassFile("output/" + cppBuilder.getCppFilename());
-
                         mainSourceBuilder.addHeader(cppBuilder.getHppFilename());
                         mainSourceBuilder.registerClassMethods(currentClassId, cppBuilder.getFilename());
                     }
 
                     currentClassId++;
                 } catch (IOException ex) {
-                    logger.error("Error while processing {}", entry.getName(), ex);
+                    Logger.error("Error while processing {}", entry.getName(), ex);
                 }
             });
 
-            if (platform == Platform.ANDROID) {
+            if (config.getPlatform() == Platform.ANDROID) {
                 for (ClassNode hiddenClass : hiddenMethodsPool.getClasses()) {
                     ClassWriter classWriter = new SafeClassWriter(metadataReader, Opcodes.ASM7 | ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
                     hiddenClass.accept(classWriter);
@@ -297,9 +246,6 @@ public class NativeObfuscator {
             } else {
                 for (ClassNode hiddenClass : hiddenMethodsPool.getClasses()) {
                     String hiddenClassFileName = "data_" + Util.escapeCppNameString(hiddenClass.name.replace('/', '_'));
-
-                    cMakeBuilder.addClassFile("output/" + hiddenClassFileName + ".hpp");
-                    cMakeBuilder.addClassFile("output/" + hiddenClassFileName + ".cpp");
 
                     mainSourceBuilder.addHeader(hiddenClassFileName + ".hpp");
                     mainSourceBuilder.registerDefine(stringPool.get(hiddenClass.name), hiddenClassFileName);
@@ -339,31 +285,11 @@ public class NativeObfuscator {
 
             String loaderClassName = nativeDir + "/Loader";
 
-            ClassNode loaderClass;
-
-            if (libName == null) {
-                ClassReader loaderClassReader = new ClassReader(Objects.requireNonNull(NativeObfuscator.class
-                    .getResourceAsStream("compiletime/LoaderUnpack.class")));
-                loaderClass = new ClassNode(Opcodes.ASM7);
-                loaderClassReader.accept(loaderClass, 0);
-                loaderClass.sourceFile = "synthetic";
-                System.out.println("/" + nativeDir + "/");
-            } else {
-                ClassReader loaderClassReader = new ClassReader(Objects.requireNonNull(NativeObfuscator.class
-                    .getResourceAsStream("compiletime/LoaderPlain.class")));
-                loaderClass = new ClassNode(Opcodes.ASM7);
-                loaderClassReader.accept(loaderClass, 0);
-                loaderClass.sourceFile = "synthetic";
-                loaderClass.methods.forEach(method -> {
-                    for (int i = 0; i < method.instructions.size(); i++) {
-                        AbstractInsnNode insnNode = method.instructions.get(i);
-                        if (insnNode instanceof LdcInsnNode && ((LdcInsnNode) insnNode).cst instanceof String &&
-                            ((LdcInsnNode) insnNode).cst.equals("%LIB_NAME%")) {
-                            ((LdcInsnNode) insnNode).cst = libName;
-                        }
-                    }
-                });
-            }
+            ClassReader loaderClassReader = new ClassReader(Objects.requireNonNull(NativeObfuscator.class
+                .getResourceAsStream("loader/Loader.class")));
+            ClassNode loaderClass = new ClassNode(Opcodes.ASM7);
+            loaderClassReader.accept(loaderClass, 0);
+            loaderClass.sourceFile = "synthetic";
 
             ClassNode resultLoaderClass = new ClassNode(Opcodes.ASM7);
             String originalLoaderClassName = loaderClass.name;
@@ -373,12 +299,13 @@ public class NativeObfuscator {
                     return internalName.equals(originalLoaderClassName) ? loaderClassName : internalName;
                 }
             }));
+            resultLoaderClass.version = Opcodes.V1_8;
 
             ClassWriter classWriter = new SafeClassWriter(metadataReader, Opcodes.ASM7 | ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
             resultLoaderClass.accept(classWriter);
             Util.writeEntry(out, loaderClassName + ".class", classWriter.toByteArray());
 
-            logger.info("Jar file ready!");
+            Logger.info("Jar file ready!");
             Manifest mf = jar.getManifest();
             if (mf != null) {
                 out.putNextEntry(new ZipEntry(JarFile.MANIFEST_NAME));
@@ -388,43 +315,30 @@ public class NativeObfuscator {
             metadataReader.close();
         }
 
-        Files.write(cppDir.resolve("string_pool.cpp"), stringPool.build().getBytes(StandardCharsets.UTF_8));
+        Files.writeString(cppDir.resolve("string_pool.cpp"), stringPool.build());
+        Files.writeString(cppDir.resolve("native_jvm_output.cpp"), mainSourceBuilder.build(nativeDir, currentClassId));
 
-        Files.write(cppDir.resolve("native_jvm_output.cpp"), mainSourceBuilder.build(nativeDir, currentClassId)
-            .getBytes(StandardCharsets.UTF_8));
+        // Compile the source-code with Zig
+        try {
+            List<Path> paths = ZigCompiler.compileWithZig(config.getZigExecutable(),
+                outputDir,
+                cppDir,
+                config.getZigCompileThreads(),
+                true,
+                config.getZigCompilerTargets());
 
-        Files.write(cppDir.resolve("CMakeLists.txt"), cMakeBuilder.build().getBytes(StandardCharsets.UTF_8));
-    }
+            // Copy the compiled libraries into the jarfile
+            try (FileSystem fileSystem = FileSystems.newFileSystem(tempJarFile)) {
+                for (Path path : paths) {
+                    Logger.info("Copying {} to {}", path.getFileName().toString(), nativeDir + "/" + path.getFileName());
+                    Path zipPath = fileSystem.getPath(nativeDir + "/" + path.getFileName().toString());
+                    Files.copy(path, zipPath);
+                }
+            }
 
-    public Snippets getSnippets() {
-        return snippets;
-    }
-
-    public StringPool getStringPool() {
-        return stringPool;
-    }
-
-    public NodeCache<String> getCachedStrings() {
-        return cachedStrings;
-    }
-
-    public NodeCache<String> getCachedClasses() {
-        return cachedClasses;
-    }
-
-    public NodeCache<CachedMethodInfo> getCachedMethods() {
-        return cachedMethods;
-    }
-
-    public NodeCache<CachedFieldInfo> getCachedFields() {
-        return cachedFields;
-    }
-
-    public String getNativeDir() {
-        return nativeDir;
-    }
-
-    public HiddenMethodsPool getHiddenMethodsPool() {
-        return hiddenMethodsPool;
+            Files.copy(tempJarFile, config.getOutputJar().toPath(), StandardCopyOption.REPLACE_EXISTING);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 }

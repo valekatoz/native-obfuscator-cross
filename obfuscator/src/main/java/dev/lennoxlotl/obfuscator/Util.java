@@ -1,5 +1,8 @@
 package dev.lennoxlotl.obfuscator;
 
+import me.tongfei.progressbar.ProgressBar;
+import me.tongfei.progressbar.ProgressBarBuilder;
+import me.tongfei.progressbar.ProgressBarStyleBuilder;
 import org.objectweb.asm.Opcodes;
 
 import java.io.*;
@@ -337,5 +340,24 @@ public class Util {
 
     public static String getOpcodeString(int opcode) {
         return OPCODE_NAME_MAP.getOrDefault(opcode, "UNKNOWN");
+    }
+
+    public static ProgressBar buildProgressbar(String taskName, int max) {
+        return new ProgressBarBuilder()
+            .setTaskName(taskName)
+            .setStyle(new ProgressBarStyleBuilder()
+                .refreshPrompt("\r")
+                .leftBracket("\u001b[94m")
+                .delimitingSequence("\u001b[90m")
+                .rightBracket("\u001b[0m")
+                .block('━')
+                .space('━')
+                .fractionSymbols(" ╸")
+                .rightSideFractionSymbol('╺')
+                .build())
+            .setUpdateIntervalMillis(50)
+            .hideEta()
+            .setInitialMax(max)
+            .build();
     }
 }

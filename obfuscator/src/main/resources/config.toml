@@ -5,8 +5,29 @@ output = "output.jar"
 # The folder which contains all libraries your program might reference
 libraries = "libraries"
 # The class file path to use for the loader class
-loader = "native0"
-# The jvm platform to transpile for (hotspot, std_java, android)
+loader = "dev/lennoxlotl/obfuscator"
+# The jvm platform to transpile for
+# Available are:
+#   - hotspot (recommended)
+#   - std_java
+#   - android
 platform = "hotspot"
 # Whether to use annotations to filter classes or not
 annotations = false
+
+# Zig compiler settings
+[zig]
+# The path to the executable of the compiler
+executable = ""
+# The amount of threads to use
+threads = 32
+# The targets to compile the transpiled code for
+# Available are:
+#   - windows_x86
+#   - linux_x86
+#   - macos_x86
+#   - macos_aarch64
+targets = [
+    "windows_x86",
+    "linux_x86"
+]
