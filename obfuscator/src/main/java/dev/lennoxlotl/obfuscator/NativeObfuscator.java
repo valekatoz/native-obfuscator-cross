@@ -93,17 +93,14 @@ public class NativeObfuscator {
         methodProcessor = new MethodProcessor(this);
     }
 
-    public void process(Path inputJarPath, Path outputDir, List<Path> inputLibs,
-                        List<String> blackList, List<String> whiteList, String plainLibName,
-                        String customLibraryDirectory,
-                        Platform platform, boolean useAnnotations, boolean generateDebugJar) throws IOException {
+    public void process(Path inputJarPath, Path outputDir, List<Path> inputLibs, String loaderDir, Platform platform, boolean useAnnotations) throws IOException {
         if (Files.exists(outputDir) && Files.isSameFile(inputJarPath.toRealPath().getParent(), outputDir.toRealPath())) {
             throw new RuntimeException("Input jar can't be in the same directory as output directory");
         }
 
         List<Path> libs = new ArrayList<>(inputLibs);
         libs.add(inputJarPath);
-        ClassMethodFilter classMethodFilter = new ClassMethodFilter(ClassMethodList.parse(blackList), ClassMethodList.parse(whiteList), useAnnotations);
+        ClassMethodFilter classMethodFilter = new ClassMethodFilter(useAnnotations);
         ClassMetadataReader metadataReader = new ClassMetadataReader(libs.stream().map(x -> {
             try {
                 return new JarFile(x.toFile());
@@ -139,25 +136,15 @@ public class NativeObfuscator {
 
         File jarFile = inputJarPath.toAbsolutePath().toFile();
         try (JarFile jar = new JarFile(jarFile);
-             ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(outputDir.resolve(jarFile.getName())));
-             ZipOutputStream debug = generateDebugJar ? new ZipOutputStream(
-                     Files.newOutputStream(outputDir.resolve("debug.jar"))) : null) {
+             ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(outputDir.resolve(jarFile.getName())))) {
 
             logger.info("Processing {}...", jarFile);
 
-            if (customLibraryDirectory != null) {
-                nativeDir = customLibraryDirectory;
+            nativeDir = loaderDir;
 
-                if (jar.stream().anyMatch(x -> x.getName().equals(nativeDir) ||
-                        x.getName().startsWith(nativeDir + "/"))) {
-                    logger.warn("Directory '{}' already exists in input jar file", nativeDir);
-                }
-            } else {
-                int nativeDirId = IntStream.iterate(0, i -> i + 1)
-                        .filter(i -> jar.stream().noneMatch(x -> x.getName().equals("native" + i) ||
-                                x.getName().startsWith("native" + i + "/")))
-                        .findFirst().orElseThrow(RuntimeException::new);
-                nativeDir = "native" + nativeDirId;
+            if (jar.stream().anyMatch(x -> x.getName().equals(nativeDir) ||
+                x.getName().startsWith(nativeDir + "/"))) {
+                logger.warn("Directory '{}' already exists in input jar file", nativeDir);
             }
 
             hiddenMethodsPool = new HiddenMethodsPool(nativeDir + "/hidden");
@@ -170,9 +157,6 @@ public class NativeObfuscator {
                 try {
                     if (!entry.getName().endsWith(".class")) {
                         Util.writeEntry(jar, out, entry);
-                        if (debug != null) {
-                            Util.writeEntry(jar, debug, entry);
-                        }
                         return;
                     }
 
@@ -184,9 +168,6 @@ public class NativeObfuscator {
 
                     if (Util.byteArrayToInt(Arrays.copyOfRange(src, 0, 4)) != 0xCAFEBABE) {
                         Util.writeEntry(out, entry.getName(), src);
-                        if (debug != null) {
-                            Util.writeEntry(debug, entry.getName(), src);
-                        }
                         return;
                     }
 
@@ -198,38 +179,29 @@ public class NativeObfuscator {
                     classReader.accept(rawClassNode, 0);
 
                     if (!classMethodFilter.shouldProcess(rawClassNode) ||
-                            rawClassNode.methods.stream().noneMatch(method -> MethodProcessor.shouldProcess(method) &&
-                                    classMethodFilter.shouldProcess(rawClassNode, method))) {
+                        rawClassNode.methods.stream().noneMatch(method -> MethodProcessor.shouldProcess(method) &&
+                            classMethodFilter.shouldProcess(rawClassNode, method))) {
                         logger.info("Skipping {}", rawClassNode.name);
                         if (useAnnotations) {
                             ClassMethodFilter.cleanAnnotations(rawClassNode);
                             ClassWriter clearedClassWriter = new SafeClassWriter(metadataReader, Opcodes.ASM7);
                             rawClassNode.accept(clearedClassWriter);
                             Util.writeEntry(out, entry.getName(), clearedClassWriter.toByteArray());
-                            if (debug != null) {
-                                Util.writeEntry(debug, entry.getName(), clearedClassWriter.toByteArray());
-                            }
                             return;
                         }
                         Util.writeEntry(out, entry.getName(), src);
-                        if (debug != null) {
-                            Util.writeEntry(debug, entry.getName(), src);
-                        }
                         return;
                     }
 
                     logger.info("Preprocessing {}", rawClassNode.name);
 
                     rawClassNode.methods.stream()
-                            .filter(MethodProcessor::shouldProcess)
-                            .filter(methodNode -> classMethodFilter.shouldProcess(rawClassNode, methodNode))
-                            .forEach(methodNode -> PreprocessorRunner.preprocess(rawClassNode, methodNode, platform));
+                        .filter(MethodProcessor::shouldProcess)
+                        .filter(methodNode -> classMethodFilter.shouldProcess(rawClassNode, methodNode))
+                        .forEach(methodNode -> PreprocessorRunner.preprocess(rawClassNode, methodNode, platform));
 
                     ClassWriter preprocessorClassWriter = new SafeClassWriter(metadataReader, Opcodes.ASM7 | ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
                     rawClassNode.accept(preprocessorClassWriter);
-                    if (debug != null) {
-                        Util.writeEntry(debug, entry.getName(), preprocessorClassWriter.toByteArray());
-                    }
                     classReader = new ClassReader(preprocessorClassWriter.toByteArray());
                     ClassNode classNode = new ClassNode(Opcodes.ASM7);
                     classReader.accept(classNode, 0);
@@ -238,7 +210,7 @@ public class NativeObfuscator {
 
                     if (classNode.methods.stream().noneMatch(x -> x.name.equals("<clinit>"))) {
                         classNode.methods.add(new MethodNode(Opcodes.ASM7, Opcodes.ACC_STATIC,
-                                "<clinit>", "()V", null, new String[0]));
+                            "<clinit>", "()V", null, new String[0]));
                     }
 
                     cachedStrings.clear();
@@ -247,7 +219,7 @@ public class NativeObfuscator {
                     cachedFields.clear();
 
                     try (ClassSourceBuilder cppBuilder =
-                                 new ClassSourceBuilder(cppOutput, classNode.name, classIndexReference[0]++, stringPool)) {
+                             new ClassSourceBuilder(cppOutput, classNode.name, classIndexReference[0]++, stringPool)) {
                         StringBuilder instructions = new StringBuilder();
 
                         for (int i = 0; i < classNode.methods.size(); i++) {
@@ -282,7 +254,7 @@ public class NativeObfuscator {
 
                         classNode.version = 52;
                         ClassWriter classWriter = new SafeClassWriter(metadataReader,
-                                Opcodes.ASM7 | ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
+                            Opcodes.ASM7 | ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
                         classNode.accept(classWriter);
                         Util.writeEntry(out, entry.getName(), classWriter.toByteArray());
 
@@ -327,10 +299,6 @@ public class NativeObfuscator {
                         data.add(b);
                     }
 
-                    if (debug != null) {
-                        Util.writeEntry(debug, hiddenClass.name + ".class", rawData);
-                    }
-
                     try (BufferedWriter hppWriter = Files.newBufferedWriter(cppOutput.resolve(hiddenClassFileName + ".hpp"))) {
                         hppWriter.append("#include \"../native_jvm.hpp\"\n\n");
                         hppWriter.append("#ifndef ").append(hiddenClassFileName.toUpperCase()).append("_HPP_GUARD\n\n");
@@ -360,29 +328,12 @@ public class NativeObfuscator {
 
             ClassNode loaderClass;
 
-            if (plainLibName == null) {
-                ClassReader loaderClassReader = new ClassReader(Objects.requireNonNull(NativeObfuscator.class
-                        .getResourceAsStream("compiletime/LoaderUnpack.class")));
-                loaderClass = new ClassNode(Opcodes.ASM7);
-                loaderClassReader.accept(loaderClass, 0);
-                loaderClass.sourceFile = "synthetic";
-                System.out.println("/" + nativeDir + "/");
-            } else {
-                ClassReader loaderClassReader = new ClassReader(Objects.requireNonNull(NativeObfuscator.class
-                        .getResourceAsStream("compiletime/LoaderPlain.class")));
-                loaderClass = new ClassNode(Opcodes.ASM7);
-                loaderClassReader.accept(loaderClass, 0);
-                loaderClass.sourceFile = "synthetic";
-                loaderClass.methods.forEach(method -> {
-                    for (int i = 0; i < method.instructions.size(); i++) {
-                        AbstractInsnNode insnNode = method.instructions.get(i);
-                        if (insnNode instanceof LdcInsnNode && ((LdcInsnNode) insnNode).cst instanceof String &&
-                                ((LdcInsnNode) insnNode).cst.equals("%LIB_NAME%")) {
-                            ((LdcInsnNode) insnNode).cst = plainLibName;
-                        }
-                    }
-                });
-            }
+            ClassReader loaderClassReader = new ClassReader(Objects.requireNonNull(NativeObfuscator.class
+                .getResourceAsStream("compiletime/LoaderUnpack.class")));
+            loaderClass = new ClassNode(Opcodes.ASM7);
+            loaderClassReader.accept(loaderClass, 0);
+            loaderClass.sourceFile = "synthetic";
+            System.out.println("/" + nativeDir + "/");
 
             ClassNode resultLoaderClass = new ClassNode(Opcodes.ASM7);
             String originalLoaderClassName = loaderClass.name;
@@ -410,7 +361,7 @@ public class NativeObfuscator {
         Files.write(cppDir.resolve("string_pool.cpp"), stringPool.build().getBytes(StandardCharsets.UTF_8));
 
         Files.write(cppDir.resolve("native_jvm_output.cpp"), mainSourceBuilder.build(nativeDir, currentClassId)
-                .getBytes(StandardCharsets.UTF_8));
+            .getBytes(StandardCharsets.UTF_8));
 
         Files.write(cppDir.resolve("CMakeLists.txt"), cMakeBuilder.build().getBytes(StandardCharsets.UTF_8));
     }

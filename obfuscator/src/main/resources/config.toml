@@ -1,0 +1,12 @@
+# The path of the to obfuscate jar
+input = "input.jar"
+# The target path for the output jar
+output = "output.jar"
+# The folder which contains all libraries your program might reference
+libraries = "libraries"
+# The class file path to use for the loader class
+loader = "native0"
+# The jvm platform to transpile for (hotspot, std_java, android)
+platform = "hotspot"
+# Whether to use annotations to filter classes or not
+annotations = false

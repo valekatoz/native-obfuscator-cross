@@ -34,6 +34,8 @@ dependencies {
     implementation("org.apache.logging.log4j:log4j-slf4j-impl:2.12.4")
     implementation("org.apache.logging.log4j:log4j-api:2.12.4")
 
+    implementation("org.tomlj:tomlj:1.1.1")
+
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.4.2")
     testImplementation("org.junit.jupiter:junit-jupiter-engine:5.4.2")
 }
