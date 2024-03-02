@@ -60,3 +60,8 @@ targets = [
     "linux_x86"
 ]
 ```
+
+## Roadmap
+- [x] Config file instead of cli
+- [x] Compilation using Zig
+- [ ] VMProtect Support (optional marker placement with annotations)
