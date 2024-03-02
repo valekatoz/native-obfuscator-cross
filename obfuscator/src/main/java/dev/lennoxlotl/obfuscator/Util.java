@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -340,6 +341,22 @@ public class Util {
 
     public static String getOpcodeString(int opcode) {
         return OPCODE_NAME_MAP.getOrDefault(opcode, "UNKNOWN");
+    }
+
+    public static void deleteDirectory(Path path) {
+        try {
+            Files.walk(path)
+                .sorted(Comparator.reverseOrder())
+                .forEach(p -> {
+                    try {
+                        Files.delete(p);
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     public static ProgressBar buildProgressbar(String taskName, int max) {

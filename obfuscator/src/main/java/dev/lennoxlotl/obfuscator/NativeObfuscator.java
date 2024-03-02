@@ -21,6 +21,7 @@ import ru.gravit.launchserver.asm.SafeClassWriter;
 import java.io.*;
 import java.nio.file.FileSystem;
 import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -342,7 +343,7 @@ public class NativeObfuscator {
         }
 
         if (config.isDeleteTempDir()) {
-            workingDir.toFile().delete();
+            Util.deleteDirectory(workingDir);
         }
     }
 }
