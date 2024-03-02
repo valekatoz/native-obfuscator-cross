@@ -30,6 +30,7 @@ public class Main {
                 config.getInputJar().toPath(),
                 config.getOutputJar().toPath(),
                 libs,
+                null,
                 config.getLoaderDirectory(),
                 config.getPlatform(),
                 config.isAnnotations()

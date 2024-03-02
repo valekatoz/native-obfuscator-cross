@@ -93,7 +93,7 @@ public class NativeObfuscator {
         methodProcessor = new MethodProcessor(this);
     }
 
-    public void process(Path inputJarPath, Path outputDir, List<Path> inputLibs, String loaderDir, Platform platform, boolean useAnnotations) throws IOException {
+    public void process(Path inputJarPath, Path outputDir, List<Path> inputLibs, String loaderDir, String libName, Platform platform, boolean useAnnotations) throws IOException {
         if (Files.exists(outputDir) && Files.isSameFile(inputJarPath.toRealPath().getParent(), outputDir.toRealPath())) {
             throw new RuntimeException("Input jar can't be in the same directory as output directory");
         }
@@ -140,7 +140,20 @@ public class NativeObfuscator {
 
             logger.info("Processing {}...", jarFile);
 
-            nativeDir = loaderDir;
+            if (loaderDir != null) {
+                nativeDir = loaderDir;
+
+                if (jar.stream().anyMatch(x -> x.getName().equals(nativeDir) ||
+                    x.getName().startsWith(nativeDir + "/"))) {
+                    logger.warn("Directory '{}' already exists in input jar file", nativeDir);
+                }
+            } else {
+                int nativeDirId = IntStream.iterate(0, i -> i + 1)
+                    .filter(i -> jar.stream().noneMatch(x -> x.getName().equals("native" + i) ||
+                        x.getName().startsWith("native" + i + "/")))
+                    .findFirst().orElseThrow(RuntimeException::new);
+                nativeDir = "native" + nativeDirId;
+            }
 
             if (jar.stream().anyMatch(x -> x.getName().equals(nativeDir) ||
                 x.getName().startsWith(nativeDir + "/"))) {
@@ -328,12 +341,29 @@ public class NativeObfuscator {
 
             ClassNode loaderClass;
 
-            ClassReader loaderClassReader = new ClassReader(Objects.requireNonNull(NativeObfuscator.class
-                .getResourceAsStream("compiletime/LoaderUnpack.class")));
-            loaderClass = new ClassNode(Opcodes.ASM7);
-            loaderClassReader.accept(loaderClass, 0);
-            loaderClass.sourceFile = "synthetic";
-            System.out.println("/" + nativeDir + "/");
+            if (libName == null) {
+                ClassReader loaderClassReader = new ClassReader(Objects.requireNonNull(NativeObfuscator.class
+                    .getResourceAsStream("compiletime/LoaderUnpack.class")));
+                loaderClass = new ClassNode(Opcodes.ASM7);
+                loaderClassReader.accept(loaderClass, 0);
+                loaderClass.sourceFile = "synthetic";
+                System.out.println("/" + nativeDir + "/");
+            } else {
+                ClassReader loaderClassReader = new ClassReader(Objects.requireNonNull(NativeObfuscator.class
+                    .getResourceAsStream("compiletime/LoaderPlain.class")));
+                loaderClass = new ClassNode(Opcodes.ASM7);
+                loaderClassReader.accept(loaderClass, 0);
+                loaderClass.sourceFile = "synthetic";
+                loaderClass.methods.forEach(method -> {
+                    for (int i = 0; i < method.instructions.size(); i++) {
+                        AbstractInsnNode insnNode = method.instructions.get(i);
+                        if (insnNode instanceof LdcInsnNode && ((LdcInsnNode) insnNode).cst instanceof String &&
+                            ((LdcInsnNode) insnNode).cst.equals("%LIB_NAME%")) {
+                            ((LdcInsnNode) insnNode).cst = libName;
+                        }
+                    }
+                });
+            }
 
             ClassNode resultLoaderClass = new ClassNode(Opcodes.ASM7);
             String originalLoaderClassName = loaderClass.name;
