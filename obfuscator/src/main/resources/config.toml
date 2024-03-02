@@ -14,6 +14,8 @@ loader = "dev/lennoxlotl/obfuscator"
 platform = "hotspot"
 # Whether to use annotations to filter classes or not
 annotations = false
+# Deletes the working directory if enabled
+delete_temp_dir = true
 
 # Zig compiler settings
 [zig]

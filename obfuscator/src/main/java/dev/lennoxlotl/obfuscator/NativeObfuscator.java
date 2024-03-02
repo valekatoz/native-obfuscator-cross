@@ -59,7 +59,7 @@ public class NativeObfuscator {
     }
 
     public void process(ObfuscatorConfig config) throws IOException {
-        Path outputDir = new File("temp-" + System.currentTimeMillis()).toPath();
+        Path workingDir = new File("temp-" + System.currentTimeMillis()).toPath();
         Path inputJarPath = config.getInputJar().toPath();
         List<Path> inputLibs = new ArrayList<>();
         if (config.getLibrariesDirectory() != null) {
@@ -68,7 +68,7 @@ public class NativeObfuscator {
                 .forEach(inputLibs::add);
         }
 
-        if (Files.exists(outputDir) && Files.isSameFile(inputJarPath.toRealPath().getParent(), outputDir.toRealPath())) {
+        if (Files.exists(workingDir) && Files.isSameFile(inputJarPath.toRealPath().getParent(), workingDir.toRealPath())) {
             throw new RuntimeException("Input jar can't be in the same directory as output directory");
         }
 
@@ -83,7 +83,7 @@ public class NativeObfuscator {
             }
         }).collect(Collectors.toList()));
 
-        Path cppDir = outputDir.resolve("cpp");
+        Path cppDir = workingDir.resolve("cpp");
         Path cppOutput = cppDir.resolve("output");
         Files.createDirectories(cppOutput);
 
@@ -95,7 +95,7 @@ public class NativeObfuscator {
         MainSourceBuilder mainSourceBuilder = new MainSourceBuilder();
 
         File jarFile = inputJarPath.toAbsolutePath().toFile();
-        Path tempJarFile = outputDir.resolve(jarFile.getName());
+        Path tempJarFile = workingDir.resolve(jarFile.getName());
         try (JarFile jar = new JarFile(jarFile);
              ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(tempJarFile))) {
 
@@ -321,7 +321,7 @@ public class NativeObfuscator {
         // Compile the source-code with Zig
         try {
             List<Path> paths = ZigCompiler.compileWithZig(config.getZigExecutable(),
-                outputDir,
+                workingDir,
                 cppDir,
                 config.getZigCompileThreads(),
                 true,
@@ -339,6 +339,10 @@ public class NativeObfuscator {
             Files.copy(tempJarFile, config.getOutputJar().toPath(), StandardCopyOption.REPLACE_EXISTING);
         } catch (Exception e) {
             e.printStackTrace();
+        }
+
+        if (config.isDeleteTempDir()) {
+            workingDir.toFile().delete();
         }
     }
 }

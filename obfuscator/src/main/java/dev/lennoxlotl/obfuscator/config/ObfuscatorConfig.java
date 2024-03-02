@@ -31,6 +31,7 @@ public class ObfuscatorConfig {
     private String loaderDirectory;
     private Platform platform;
     private boolean annotations;
+    private boolean deleteTempDir;
     // Zig properties
     private String zigExecutable;
     private int zigCompileThreads;
@@ -64,6 +65,7 @@ public class ObfuscatorConfig {
         String platform = result.getString("platform", () -> "hotspot");
         String loaderDirectory = result.getString("loader", () -> "native0");
         boolean annotations = result.getBoolean("annotations", () -> false);
+        boolean deleteTempDir = result.getBoolean("delete_temp_dir", () -> true);
         String zigExecutable = result.getString("zig.executable", () -> null);
         int zigCompileThreads = (int) result.getLong("zig.threads", () -> 1L);
         TomlArray targets = result.getArray("zig.targets");
@@ -100,6 +102,7 @@ public class ObfuscatorConfig {
             loaderDirectory,
             enumPlatform,
             annotations,
+            deleteTempDir,
             zigExecutable,
             zigCompileThreads,
             compilerTargets);
