@@ -48,6 +48,8 @@ public class ObfuscatorConfig {
         // Copy default config file
         if (!configFile.exists()) {
             Util.copyResource("config.toml", new File("").toPath());
+            Logger.info("The default config has been generated, configure it to your liking before running the tool again!");
+            System.exit(0);
         }
 
         TomlParseResult result = Toml.parse(configFile.toPath());
