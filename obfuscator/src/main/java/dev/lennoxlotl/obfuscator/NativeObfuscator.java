@@ -144,17 +144,7 @@ public class NativeObfuscator {
                     ClassNode rawClassNode = new ClassNode(Opcodes.ASM7);
                     classReader.accept(rawClassNode, 0);
 
-                    if (!classMethodFilter.shouldProcess(rawClassNode) ||
-                        rawClassNode.methods.stream().noneMatch(method -> MethodProcessor.shouldProcess(method) &&
-                            classMethodFilter.shouldProcess(rawClassNode, method))) {
-                        Logger.info("Skipping {}", rawClassNode.name);
-                        if (config.isAnnotations()) {
-                            ClassMethodFilter.cleanAnnotations(rawClassNode);
-                            ClassWriter clearedClassWriter = new SafeClassWriter(metadataReader, Opcodes.ASM7);
-                            rawClassNode.accept(clearedClassWriter);
-                            Util.writeEntry(out, entry.getName(), clearedClassWriter.toByteArray());
-                            return;
-                        }
+                    if (rawClassNode.methods.stream().noneMatch(node -> MethodProcessor.shouldProcess(rawClassNode, node, config.isAnnotations()))) {
                         Util.writeEntry(out, entry.getName(), src);
                         return;
                     }
@@ -162,8 +152,7 @@ public class NativeObfuscator {
                     Logger.info("Preprocessing {}", rawClassNode.name);
 
                     rawClassNode.methods.stream()
-                        .filter(MethodProcessor::shouldProcess)
-                        .filter(methodNode -> classMethodFilter.shouldProcess(rawClassNode, methodNode))
+                        .filter(node -> MethodProcessor.shouldProcess(rawClassNode, node, config.isAnnotations()))
                         .forEach(methodNode -> PreprocessorRunner.preprocess(rawClassNode, methodNode, config.getPlatform()));
 
                     ClassWriter preprocessorClassWriter = new SafeClassWriter(metadataReader, Opcodes.ASM7 | ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
@@ -191,11 +180,7 @@ public class NativeObfuscator {
                         for (int i = 0; i < classNode.methods.size(); i++) {
                             MethodNode method = classNode.methods.get(i);
 
-                            if (!MethodProcessor.shouldProcess(method)) {
-                                continue;
-                            }
-
-                            if (!classMethodFilter.shouldProcess(classNode, method)) {
+                            if (!MethodProcessor.shouldProcess(classNode, method, config.isAnnotations())) {
                                 continue;
                             }
 

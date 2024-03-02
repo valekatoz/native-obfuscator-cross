@@ -5,7 +5,7 @@ import org.tinylog.configuration.Configuration;
 /**
  * Loads the custom tinylog configuration.
  * <p>
- * We want to use ANSI colors so we cannot use config files.
+ * We want to use ANSI colors, so we cannot use config files.
  */
 public class TinyLogConfiguration {
     public static void configure() {

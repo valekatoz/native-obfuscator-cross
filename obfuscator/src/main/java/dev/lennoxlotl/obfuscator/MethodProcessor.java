@@ -13,7 +13,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class MethodProcessor {
-
+    private static final String NATIVE_ANNOTATION_DESC = Type.getDescriptor(NativeObfuscate.class);
     public static final Map<Integer, String> INSTRUCTIONS = new HashMap<>();
 
     static {
@@ -27,26 +27,26 @@ public class MethodProcessor {
     }
 
     public static final String[] CPP_TYPES = {
-            "void", // 0
-            "jboolean", // 1
-            "jchar", // 2
-            "jbyte", // 3
-            "jshort", // 4
-            "jint", // 5
-            "jfloat", // 6
-            "jlong", // 7
-            "jdouble", // 8
-            "jarray", // 9
-            "jobject", // 10
-            "jobject" // 11
+        "void", // 0
+        "jboolean", // 1
+        "jchar", // 2
+        "jbyte", // 3
+        "jshort", // 4
+        "jint", // 5
+        "jfloat", // 6
+        "jlong", // 7
+        "jdouble", // 8
+        "jarray", // 9
+        "jobject", // 10
+        "jobject" // 11
     };
 
     public static final int[] TYPE_TO_STACK = {
-            1, 1, 1, 1, 1, 1, 1, 2, 2, 0, 0, 0
+        1, 1, 1, 1, 1, 1, 1, 2, 2, 0, 0, 0
     };
 
     public static final int[] STACK_TO_STACK = {
-            1, 1, 1, 2, 2, 0, 0, 0, 0
+        1, 1, 1, 2, 2, 0, 0, 0, 0
     };
 
     private final NativeObfuscator obfuscator;
@@ -89,10 +89,23 @@ public class MethodProcessor {
         }
     }
 
-    public static boolean shouldProcess(MethodNode method) {
+    public static boolean shouldProcess(ClassNode clazz, MethodNode method, boolean useAnnotations) {
+        boolean annotationPresentClazz = clazz.visibleAnnotations != null &&
+            clazz.visibleAnnotations.stream().anyMatch(node -> node.desc.equals(NATIVE_ANNOTATION_DESC));
+        boolean annotationPresent = method.visibleAnnotations != null &&
+            method.visibleAnnotations.stream().anyMatch(node -> node.desc.equals(NATIVE_ANNOTATION_DESC));
+
+        // The static block will never have the @NativeObfuscate annotation, therefore we have to check
+        // if any method in the class is annotated with it for it to be properly processed
+        boolean annotationPresentAny = clazz.methods.stream()
+            .anyMatch(methodNode -> methodNode.visibleAnnotations != null &&
+                methodNode.visibleAnnotations.stream().anyMatch(node -> node.desc.equals(NATIVE_ANNOTATION_DESC)));
+        boolean staticBlock = method.name.equals("<clinit>") && annotationPresentAny;
+
         return !Util.getFlag(method.access, Opcodes.ACC_ABSTRACT) &&
-                !Util.getFlag(method.access, Opcodes.ACC_NATIVE) &&
-                !method.name.equals("<init>");
+            !Util.getFlag(method.access, Opcodes.ACC_NATIVE) &&
+            !method.name.equals("<init>") &&
+            (staticBlock || annotationPresent || annotationPresentClazz || !useAnnotations);
     }
 
     public static String getClassGetter(MethodContext context, String desc) {
@@ -136,8 +149,8 @@ public class MethodProcessor {
             context.nativeMethod.access |= Opcodes.ACC_NATIVE;
         } else {
             context.nativeMethods.append(String.format("            { %s, %s, (void *)&%s },\n",
-                    obfuscator.getStringPool().get(context.method.name),
-                    obfuscator.getStringPool().get(method.desc), methodName));
+                obfuscator.getStringPool().get(context.method.name),
+                obfuscator.getStringPool().get(method.desc), methodName));
         }
 
         output.append(String.format("%s JNICALL %s(JNIEnv *env, ", CPP_TYPES[context.ret.getSort()], methodName));
@@ -163,21 +176,21 @@ public class MethodProcessor {
         if (!isStatic) {
             output.append("    jclass clazz = utils::get_class_from_object(env, obj);\n");
             output.append("    if (env->ExceptionCheck()) { ").append(String.format("return (%s) 0;",
-                    CPP_TYPES[context.ret.getSort()])).append(" }\n");
+                CPP_TYPES[context.ret.getSort()])).append(" }\n");
         }
         output.append("    jobject classloader = utils::get_classloader_from_class(env, clazz);\n");
         output.append("    if (env->ExceptionCheck()) { ").append(String.format("return (%s) 0;",
-                CPP_TYPES[context.ret.getSort()])).append(" }\n");
+            CPP_TYPES[context.ret.getSort()])).append(" }\n");
         output.append("    if (classloader == nullptr) { env->FatalError(").append(context.getStringPool()
-                .get("classloader == null")).append(String.format("); return (%s) 0; }\n", CPP_TYPES[context.ret.getSort()]));
+            .get("classloader == null")).append(String.format("); return (%s) 0; }\n", CPP_TYPES[context.ret.getSort()]));
         output.append("\n");
         if (!isStatic) {
             output.append("    env->DeleteLocalRef(clazz);\n");
             output.append("    clazz = utils::find_class_wo_static(env, classloader, ")
-                    .append(context.getCachedStrings().getPointer(context.clazz.name.replace('/', '.')))
-                    .append(");\n");
+                .append(context.getCachedStrings().getPointer(context.clazz.name.replace('/', '.')))
+                .append(");\n");
             output.append("    if (env->ExceptionCheck()) { ").append(String.format("return (%s) 0;",
-                    CPP_TYPES[context.ret.getSort()])).append(" }\n");
+                CPP_TYPES[context.ret.getSort()])).append(" }\n");
         }
         output.append("    jobject lookup = nullptr;\n");
 
@@ -188,23 +201,23 @@ public class MethodProcessor {
                 context.getLabelPool().getName(tryCatch.handler.getLabel());
             }
             Set<String> classesForTryCatches = method.tryCatchBlocks.stream().filter((tryCatchBlock) -> (tryCatchBlock.type != null)).map(x -> x.type)
-                    .collect(Collectors.toSet());
+                .collect(Collectors.toSet());
             classesForTryCatches.forEach((clazz) -> {
                 int classId = context.getCachedClasses().getId(clazz);
 
                 context.output.append(String.format("    // try-catch-class %s\n", Util.escapeCommentString(clazz)));
                 context.output.append(String.format("    if (!cclasses[%d] || env->IsSameObject(cclasses[%d], NULL)) { cclasses_mtx[%d].lock(); "
-                                + "if (!cclasses[%d] || env->IsSameObject(cclasses[%d], NULL)) { if (jclass clazz = %s) { cclasses[%d] = (jclass) env->NewWeakGlobalRef(clazz); env->DeleteLocalRef(clazz); } } "
-                                + "cclasses_mtx[%d].unlock(); if (env->ExceptionCheck()) { return (%s) 0; } }\n",
-                        classId,
-                        classId,
-                        classId,
-                        classId,
-                        classId,
-                        getClassGetter(context, clazz),
-                        classId,
-                        classId,
-                        CPP_TYPES[context.ret.getSort()]));
+                        + "if (!cclasses[%d] || env->IsSameObject(cclasses[%d], NULL)) { if (jclass clazz = %s) { cclasses[%d] = (jclass) env->NewWeakGlobalRef(clazz); env->DeleteLocalRef(clazz); } } "
+                        + "cclasses_mtx[%d].unlock(); if (env->ExceptionCheck()) { return (%s) 0; } }\n",
+                    classId,
+                    classId,
+                    classId,
+                    classId,
+                    classId,
+                    getClassGetter(context, clazz),
+                    classId,
+                    classId,
+                    CPP_TYPES[context.ret.getSort()]));
             });
         }
 
@@ -237,10 +250,10 @@ public class MethodProcessor {
         for (int i = 0; i < context.argTypes.size(); ++i) {
             Type current = context.argTypes.get(i);
             output.append("    ").append(obfuscator.getSnippets().getSnippet(
-                    "LOCAL_LOAD_ARG_" + current.getSort(), Util.createMap(
-                            "index", localIndex,
-                            "arg", argNames.get(i)
-                    ))).append("\n");
+                "LOCAL_LOAD_ARG_" + current.getSort(), Util.createMap(
+                    "index", localIndex,
+                    "arg", argNames.get(i)
+                ))).append("\n");
             localIndex += current.getSize();
         }
         output.append("\n");
@@ -252,7 +265,7 @@ public class MethodProcessor {
         for (int instruction = 0; instruction < method.instructions.size(); ++instruction) {
             AbstractInsnNode node = method.instructions.get(instruction);
             context.output.append("    // ").append(Util.escapeCommentString(handlers[node.getType()]
-                    .insnToString(context, node))).append("; Stack: ").append(context.stackPointer).append("\n");
+                .insnToString(context, node))).append("; Stack: ").append(context.stackPointer).append("\n");
             handlers[node.getType()].accept(context, node);
             context.stackPointer = handlers[node.getType()].getNewStackPointer(node, context.stackPointer);
             context.output.append("    // New stack: ").append(context.stackPointer).append("\n");
@@ -275,20 +288,20 @@ public class MethodProcessor {
                 CatchesBlock.CatchBlock currentCatchBlock = catchBlock.getCatches().get(0);
                 if (currentCatchBlock.getClazz() == null) {
                     output.append(context.getSnippets().getSnippet("TRYCATCH_ANY_L", Util.createMap(
-                            "handler_block", context.getLabelPool().getName(currentCatchBlock.getHandler().getLabel())
+                        "handler_block", context.getLabelPool().getName(currentCatchBlock.getHandler().getLabel())
                     )));
                     output.append("\n");
                     continue;
                 }
                 output.append(context.getSnippets().getSnippet("TRYCATCH_CHECK_STACK", Util.createMap(
-                        "exception_class_ptr", context.getCachedClasses().getPointer(currentCatchBlock.getClazz()),
-                        "handler_block", context.getLabelPool().getName(currentCatchBlock.getHandler().getLabel())
+                    "exception_class_ptr", context.getCachedClasses().getPointer(currentCatchBlock.getClazz()),
+                    "handler_block", context.getLabelPool().getName(currentCatchBlock.getHandler().getLabel())
                 )));
                 output.append("\n");
                 if (catchBlock.getCatches().size() == 1) {
                     output.append("    ");
                     output.append(context.getSnippets().getSnippet("TRYCATCH_END_STACK", Util.createMap(
-                            "rettype", CPP_TYPES[context.ret.getSort()]
+                        "rettype", CPP_TYPES[context.ret.getSort()]
                     )));
                     output.append("\n");
                     continue;
@@ -300,7 +313,7 @@ public class MethodProcessor {
                 }
                 output.append("    ");
                 output.append(context.getSnippets().getSnippet("TRYCATCH_ANY_L", Util.createMap(
-                        "handler_block", context.catches.get(nextCatchesBlock)
+                    "handler_block", context.catches.get(nextCatchesBlock)
                 )));
                 output.append("\n");
             }
