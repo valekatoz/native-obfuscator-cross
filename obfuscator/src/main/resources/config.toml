@@ -33,11 +33,13 @@ executable = ""
 threads = 32
 # The targets to compile the transpiled code for
 # Available are:
-#   - windows_x86
-#   - linux_x86
-#   - macos_x86
+#   - windows_x86_64
+#   - windows_aarch64
+#   - linux_x86_64
+#   - linux_aarch64
+#   - macos_x86_64
 #   - macos_aarch64
 targets = [
-    "windows_x86",
-    "linux_x86"
+    "windows_x86_64",
+    "linux_x86_64"
 ]
