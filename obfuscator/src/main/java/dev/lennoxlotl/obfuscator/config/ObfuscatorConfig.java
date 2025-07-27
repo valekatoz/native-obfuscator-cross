@@ -24,6 +24,8 @@ import java.util.List;
 @ToString
 @AllArgsConstructor
 public class ObfuscatorConfig {
+    private List<String> includePatterns;
+    private List<String> excludePatterns;
     // Default properties
     private File inputJar;
     private File outputJar;
@@ -71,6 +73,8 @@ public class ObfuscatorConfig {
         String zigExecutable = result.getString("zig.executable", () -> null);
         int zigCompileThreads = (int) result.getLong("zig.threads", () -> 1L);
         TomlArray targets = result.getArray("zig.targets");
+        TomlArray includePatternsArray = result.getArray("include_patterns");
+        TomlArray excludePatternsArray = result.getArray("exclude_patterns");
 
         File inputDir = new File(input);
         File outputDir = new File(output);
@@ -98,7 +102,26 @@ public class ObfuscatorConfig {
             compilerTargets.add(ZigCompilationTarget.valueOf(targets.getString(i).toUpperCase()));
         }
 
-        return new ObfuscatorConfig(inputDir,
+        List<String> includePatterns = new ArrayList<>();
+        if (includePatternsArray != null) {
+            int includePatternsSize = includePatternsArray.size();
+            for (int i = 0; i < includePatternsSize; i++) {
+                includePatterns.add(includePatternsArray.getString(i));
+            }
+        }
+
+        List<String> excludePatterns = new ArrayList<>();
+        if (excludePatternsArray != null) {
+            int excludePatternsSize = excludePatternsArray.size();
+            for (int i = 0; i < excludePatternsSize; i++) {
+                excludePatterns.add(excludePatternsArray.getString(i));
+            }
+        }
+
+        return new ObfuscatorConfig(
+            includePatterns,
+            excludePatterns,
+            inputDir,
             outputDir,
             librariesDir,
             loaderDirectory,
@@ -108,5 +131,77 @@ public class ObfuscatorConfig {
             zigExecutable,
             zigCompileThreads,
             compilerTargets);
+    }
+
+    /**
+     * Checks if a class should be processed for obfuscation based on include/exclude patterns.
+     * If include patterns are specified, only classes matching those patterns are processed.
+     * Otherwise, all classes except those matching exclude patterns are processed.
+     *
+     * @param className The internal class name (e.g., "com/example/MyClass")
+     * @return true if the class should be processed, false otherwise
+     */
+    public boolean shouldProcessClass(String className) {
+        Logger.debug("Checking class: {}", className);
+        Logger.debug("Include patterns: {}", includePatterns);
+        Logger.debug("Exclude patterns: {}", excludePatterns);
+        
+        // If include patterns are specified, only process classes that match
+        if (!includePatterns.isEmpty()) {
+            boolean includeMatch = includePatterns.stream().anyMatch(pattern -> {
+                boolean matches = matchesGlobPattern(className, pattern);
+                Logger.debug("Include pattern '{}' vs '{}': {}", pattern, className, matches);
+                return matches;
+            });
+            
+            if (includeMatch) {
+                // Check if it should be excluded even though it matches include
+                boolean excludeMatch = excludePatterns.stream().anyMatch(pattern -> {
+                    boolean matches = matchesGlobPattern(className, pattern);
+                    Logger.debug("Exclude pattern '{}' vs '{}': {}", pattern, className, matches);
+                    return matches;
+                });
+                
+                boolean shouldProcess = !excludeMatch;
+                Logger.debug("Class '{}' - Include match: {}, Exclude match: {}, Final result: {}", 
+                    className, includeMatch, excludeMatch, shouldProcess);
+                return shouldProcess;
+            } else {
+                Logger.debug("Class '{}' - No include match, skipping", className);
+                return false;
+            }
+        }
+        
+        // Otherwise, process all classes except those matching exclude patterns
+        boolean excludeMatch = excludePatterns.stream().anyMatch(pattern -> {
+            boolean matches = matchesGlobPattern(className, pattern);
+            Logger.debug("Exclude pattern '{}' vs '{}': {}", pattern, className, matches);
+            return matches;
+        });
+        
+        boolean shouldProcess = !excludeMatch;
+        Logger.debug("Class '{}' - Exclude match: {}, Final result: {}", className, excludeMatch, shouldProcess);
+        return shouldProcess;
+    }
+    
+    /**
+     * Matches a class name against a glob pattern.
+     *
+     * @param className The class name to match
+     * @param pattern The glob pattern
+     * @return true if the class name matches the pattern
+     */
+    private boolean matchesGlobPattern(String className, String pattern) {
+        // Convert glob pattern to regex
+        String regex = pattern
+            .replace("**", "DOUBLE_STAR_PLACEHOLDER")
+            .replace("*", "[^/]*")
+            .replace("DOUBLE_STAR_PLACEHOLDER", ".*")
+            .replace("/", "/");
+        
+        boolean matches = className.matches(regex);
+        Logger.debug("Pattern matching: '{}' -> regex '{}' vs '{}' = {}", pattern, regex, className, matches);
+        
+        return matches;
     }
 }

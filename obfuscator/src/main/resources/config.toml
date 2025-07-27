@@ -17,6 +17,14 @@ annotations = false
 # Deletes the working directory if enabled
 delete_temp_dir = true
 
+# Classes and packages to include in obfuscation (if specified, only these will be processed)
+# Supports glob patterns like: mypackage/*, mypackage/**/Class1, mypackage/*/Class*
+include_patterns = []
+
+# Classes and packages to exclude from obfuscation 
+# Supports glob patterns like: mypackage/*, mypackage/**/Class1, mypackage/*/Class*
+exclude_patterns = []
+
 # Zig compiler settings
 [zig]
 # The path to the executable of the compiler

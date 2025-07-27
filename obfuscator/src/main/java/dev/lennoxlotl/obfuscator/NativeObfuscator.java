@@ -144,6 +144,13 @@ public class NativeObfuscator {
                     ClassNode rawClassNode = new ClassNode(Opcodes.ASM7);
                     classReader.accept(rawClassNode, 0);
 
+                    // Check if class should be processed based on include/exclude patterns
+                    if (!config.shouldProcessClass(rawClassNode.name)) {
+                        Logger.info("Skipping {}", rawClassNode.name);
+                        Util.writeEntry(out, entry.getName(), src);
+                        return;
+                    }
+
                     if (rawClassNode.methods.stream().noneMatch(node -> MethodProcessor.shouldProcess(rawClassNode, node, config.isAnnotations()))) {
                         Util.writeEntry(out, entry.getName(), src);
                         return;
